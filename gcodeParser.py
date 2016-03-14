@@ -78,6 +78,20 @@ class GcodeParser:
 		# G28: Move to Origin
 		self.model.do_G28(self.parseArgs(args))
 		
+	def parse_M700(self, args):
+		# M700: volumetric feedrate
+		parsedArgs = self.parseArgs(args)
+		if parsedArgs.has_key("P"):
+			self.model.setVolume(parsedArgs["P"])
+		
+	def parse_G22(self, args):
+		# G22: retract
+		self.model.setExtruding(False)
+		
+	def parse_G23(self, args):
+		# G23: unretract
+		self.model.setExtruding(True)
+		
 	def parse_G90(self, args):
 		# G90: Set to Absolute Positioning
 		self.model.setRelative(False)
@@ -89,6 +103,10 @@ class GcodeParser:
 	def parse_G92(self, args):
 		# G92: Set Position
 		self.model.do_G92(self.parseArgs(args))
+	
+	def parse_M163(self, args):
+		# G92: Set Position
+		self.model.do_M163(self.parseArgs(args))
 		
 	def warn(self, msg):
 		print "[WARN] Line %d: %s (Text:'%s')" % (self.lineNb, msg, self.line)
@@ -150,10 +168,15 @@ class GcodeModel:
 			"E":0.0}
 		# if true, args for move (G1) are given relatively (default: absolute)
 		self.isRelative = False
+		self.isExtruding = False
 		# the segments
 		self.segments = []
 		self.layers = None
 		self.distance = None
+		self.filamentColors = [[255,0,0],[255,255,0],[0,0,255],[-255,-255,-255],[255,255,255]]
+		self.filamentWeights = [0.0,0.0,0.0,0.0,0.0]
+		self.color = [255,255,255]
+		self.volume = 0
 		self.extrudate = None
 		self.bbox = None
 	
@@ -182,7 +205,10 @@ class GcodeModel:
 			type,
 			absolute,
 			self.parser.lineNb,
-			self.parser.line)
+			self.parser.line,
+			self.isExtruding,
+			self.volume,
+			self.color)
 		self.addSegment(seg)
 		# update model coords
 		self.relative = coords
@@ -206,7 +232,33 @@ class GcodeModel:
 				self.relative[axis] = args[axis]
 			else:
 				self.warn("Unknown axis '%s'"%axis)
-
+	def do_M163(self, args):
+		# M163: Set filament weight
+		if args.has_key("S") and args.has_key("P"):
+			filamentIndex = int(args["S"]) - 1
+			if filamentIndex >= 0 and filamentIndex < len(self.filamentWeights):
+				self.filamentWeights[filamentIndex] = args["P"]/100
+		color = [0,0,0]
+		for o in range(0,3):
+			color[o] = int(max(min(255.0,(
+					(self.filamentColors[0][o] * self.filamentWeights[0]) + 
+					(self.filamentColors[1][o] * self.filamentWeights[1]) + 
+					(self.filamentColors[2][o] * self.filamentWeights[2]) + 
+					(self.filamentColors[3][o] * self.filamentWeights[3]) + 
+					(self.filamentColors[4][o] * self.filamentWeights[4]) 
+			)),0.0))
+		self.setColor(color)
+		print color
+	
+	def setExtruding(self, isExtruding):
+		self.isExtruding = isExtruding
+	
+	def setVolume(self, volume):
+		self.volume = volume
+	
+	def setColor(self, color):
+		self.color = color 
+	
 	def setRelative(self, isRelative):
 		self.isRelative = isRelative
 		
@@ -244,18 +296,18 @@ class GcodeModel:
 			if (
 				(seg.coords["X"] == coords["X"]) and
 				(seg.coords["Y"] == coords["Y"]) and
-				(seg.coords["E"] != coords["E"]) ):
+				( ( seg.coords["E"] != coords["E"] ) or ( seg.isExtruding ) ) ):
 					style = "retract" if (seg.coords["E"] < coords["E"]) else "restore"
 			
 			# some horizontal movement, and positive extruder movement: extrusion
 			if (
 				( (seg.coords["X"] != coords["X"]) or (seg.coords["Y"] != coords["Y"]) ) and
-				(seg.coords["E"] > coords["E"]) ):
+				( ( seg.coords["E"] > coords["E"] ) or (seg.isExtruding ) ) ):
 				style = "extrude"
 			
 			# positive extruder movement in a different Z signals a layer change for this segment
 			if (
-				(seg.coords["E"] > coords["E"]) and
+				( ( seg.coords["E"] > coords["E"]) or ( seg.isExtruding ) ) and
 				(seg.coords["Z"] != currentLayerZ) ):
 				currentLayerZ = seg.coords["Z"]
 				currentLayerIdx += 1
@@ -343,8 +395,13 @@ class GcodeModel:
 				seg.distance = math.sqrt(d)
 				
 				# calc extrudate
-				seg.extrudate = (seg.coords["E"]-coords["E"])
-				
+				if seg.coords["E"]:
+					seg.extrudate = (seg.coords["E"]-coords["E"])
+				else:
+					if ( seg.distance > 0 and seg.volume > 0 ):
+						seg.extrudate = seg.distance * seg.volume
+					else:
+						seg.extrudate = 0.0
 				# accumulate layer metrics
 				layer.distance += seg.distance
 				layer.extrudate += seg.extrudate
@@ -368,7 +425,7 @@ class GcodeModel:
 		return "<GcodeModel: len(segments)=%d, len(layers)=%d, distance=%f, extrudate=%f, bbox=%s>"%(len(self.segments), len(self.layers), self.distance, self.extrudate, self.bbox)
 	
 class Segment:
-	def __init__(self, type, coords, lineNb, line):
+	def __init__(self, type, coords, lineNb, line, isExtruding, volume, color):
 		self.type = type
 		self.coords = coords
 		self.lineNb = lineNb
@@ -376,7 +433,10 @@ class Segment:
 		self.style = None
 		self.layerIdx = None
 		self.distance = None
+		self.isExtruding = isExtruding
 		self.extrudate = None
+		self.volume = volume
+		self.color = color
 	def __str__(self):
 		return "<Segment: type=%s, lineNb=%d, style=%s, layerIdx=%d, distance=%f, extrudate=%f>"%(self.type, self.lineNb, self.style, self.layerIdx, self.distance, self.extrudate)
 		

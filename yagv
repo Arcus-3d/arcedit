@@ -12,6 +12,7 @@ from pyglet import clock
 from pyglet.gl import *
 from pyglet.window import key
 from pyglet.window import mouse
+from math import tan, radians, sqrt
 
 from gcodeParser import *
 import os.path
@@ -41,10 +42,17 @@ class App:
 		
 		self.load(path)
 		
-		# default to the middle layer
-		self.layerIdx = len(self.model.layers)/2
+		# default to the first layer
+		self.layerIdx = 1
+		self.lineSegmentIdx = 0
+		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
+		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
+		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
+		self.mouse_direction = Vector(0,0,0)
+		self.highlightIndex = None
 
 		self.window = MyWindow(self, caption="Yet Another GCode Viewer v%s"%YAGV_VERSION, resizable=True)
+		self.aspect = float(self.window.width) / self.window.height
 
 		# debug: log all events
 		# self.window.push_handlers(pyglet.window.event.WindowEventLogger())
@@ -86,6 +94,26 @@ class App:
 		
 		t2 = time.time()
 		print "loaded file in %0.3f ms" % ((t2-t1)*1000.0, )
+
+	def unproject(self,x, y):
+		x = 2 * (float(x) / self.window.width) - 1
+		y = 2 * (float(y) / self.window.height) - 1
+		tangent = tan(radians(50) / 2)
+		dx = self.aspect * tangent * x
+		dy = tangent * y
+		dz = -1.0
+		return Vector(dx, dy, dz).normal
+
+	def pick_nearest(self):
+		p = Vector(0, 0, 0) # mouse ray position in scene
+		nearest = 0.5
+		nearest_index = None
+		for index, vertex in enumerate(self.graphics_current[self.layerIdx].vertices):
+			dp = self.mouse_direction.dot((vertex - p).normal)
+			if dp > nearest:
+				nearest = dp
+				nearest_index = index
+		self.highlightIndex = nearest_index
 	
 	def renderVertices(self):
 		t1 = time.time()
@@ -117,27 +145,27 @@ class App:
 	
 	def renderIndexedColors(self):
 		t1 = time.time()
-		# pre-render segments to colors in the index
-		styleToColoridx = {
-			"extrude" : 0,
-			"fly" : 1,
-			"retract" : 2,
-			"restore" : 3
-			}
-		
 		# all the styles for all layers
 		self.vertex_indexed_colors = []
-		
 		# for all layers
 		for layer in self.model.layers:
-			
 			# index for this layer
 			layer_vertex_indexed_colors = []
 			for seg in layer.segments:
-				# get color index for this segment
-				styleCol = styleToColoridx[seg.style]
+				colorPrevious = None
+				if seg.style == "extrude":
+					colorCurrent = seg.color
+					# naive implementation of color change over line length, not accounting for line length at all.
+					if not colorPrevious:
+						colorPrevious = colorCurrent
+					colorStart = colorPrevious
+					colorEnd = colorCurrent
+					colorPrevious = colorCurrent
+				else:
+					colorStart = [255,255,128]
+					colorEnd = [255,255,128]
 				# append color twice (once per end)
-				layer_vertex_indexed_colors.extend((styleCol, styleCol))
+				layer_vertex_indexed_colors.extend((colorStart, colorEnd))
 			
 			# append layer to all layers
 			self.vertex_indexed_colors.append(layer_vertex_indexed_colors)
@@ -148,34 +176,15 @@ class App:
 		t1 = time.time()
 		
 		self.vertex_colors = [[],[],[]]
-		
-		# render color index to real colors
-		colorMap = [
-				# 0: old layer
-				[[255,255,255, 40],[255,  0,  0, 20],[  0,  255,  0, 32],[  0,  0,  255, 32]], # extrude, fly, retract, restore
-				# 1: current layer
-				[[255,255,255,255],[255,  0,  0,128],[  0,  255,  0,128],[  0,  0,  255,128]], # extrude, fly, retract, restore
-				# 2: limbo layer
-				[[255,255,255, 10],[255,  0,  0, 10],[  0,  255,  0, 10],[  0,  0,  255, 10]] # extrude, fly, retract, restore
-				]
-		
-		# for all 3 types
-		for display_type in xrange(3):
-			
-			type_color_map = colorMap[display_type]
-			
-			# for all preindexed layer colors
+		# for all 3 layer types, with 3 different opacities.
+		for i,opacity in enumerate([80,255,20]):
 			for indexes in self.vertex_indexed_colors:
-				
 				# render color indexes to colors
-				colors = map(lambda e: type_color_map[e], indexes)
-				# flatten color values
-				fcolors = []
-				map(fcolors.extend, colors)
-				
-				# push colors to vertex list
-				self.vertex_colors[display_type].append(fcolors)
-				
+				colors = []
+				for index in indexes:
+					colors.extend(index)
+					colors.extend([opacity])
+				self.vertex_colors[i].append(colors)
 		t2 = time.time()
 		print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
 	
@@ -236,20 +245,39 @@ class App:
 
 	def layer_drag_start(self, x, y, button, modifiers):
 		self.layerDragStartLayer = self.layerIdx
+		self.layerDragStartSegment = self.lineSegmentIdx
 		self.layerDragStartX = x
 		self.layerDragStartY = y
 
+	def line_drag_start(self, x, y, button, modifiers):
+		self.layerDragStartLayer = self.layerIdx
+		self.layerDragStartSegment = self.lineSegmentIdx
+		self.layerDragStartX = x
+		self.layerDragStartY = y
 
 	def layer_drag_do(self, x, y, dx, dy, buttons, modifiers):
-		# sum x & y
-		delta = x - self.layerDragStartX + y - self.layerDragStartY
-		# new theoretical layer
-		self.layerIdx = int(self.layerDragStartLayer + delta/5)
-		# clamp layer to 0-max
+		delta = y - self.layerDragStartY + x - self.layerDragStartX
+		oldLayerIdx = self.layerIdx
+		self.layerIdx = int(self.layerDragStartLayer + delta/15)
 		self.layerIdx = max(min(self.layerIdx, self.model.topLayer), 0)
-		
+		if oldLayerIdx != self.layerIdx:
+			self.lineSegmentIdx = 0	
+		self.lineSegmentIdx = max(min(self.lineSegmentIdx, len(self.model.layers[self.layerIdx].segments) - 1),0)
+		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
+		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
+		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
 		self.window.layerLabel.text = "layer %d"%self.layerIdx
+		self.window.lineLabel.text = "line %d (%d - %d)" % ( self.lineIdx, self.lineIdxMin, self.lineIdxMax)
 		
+	def line_drag_do(self, x, y, dx, dy, buttons, modifiers):
+		delta = y - self.layerDragStartY + x - self.layerDragStartX
+		self.lineSegmentIdx = int(self.layerDragStartSegment + delta)
+		self.lineSegmentIdx = max(min(self.lineSegmentIdx, len(self.model.layers[self.layerIdx].segments) - 1),0)
+		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
+		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
+		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
+		self.window.layerLabel.text = "layer %d"%self.layerIdx
+		self.window.lineLabel.text = "line %d (%d - %d)" % ( self.lineIdx, self.lineIdxMin, self.lineIdxMax)
 	#	# clamp layer to 0-max, with origin slip
 	#	if (self.layerIdx < 0):
 	#		self.layerIdx = 0
@@ -267,8 +295,40 @@ class App:
 		self.layerDragStartLayer = None
 		self.layerDragStartX = None
 		self.layerDragStartY = None
+	
+	def line_drag_end(self, x, y, button, modifiers):
+		self.layerDragStartLayer = None
+		self.layerDragStartX = None
+		self.layerDragStartY = None
 
+class Vector(object):
+    def __init__(self, x, y, z):
+        self.x = x
+        self.y = y
+        self.z = z
 
+    def __iter__(self):
+        return iter((self.x, self.y, self.z))
+
+    def dot(self, other):
+        return self.x*other.x + self.y*other.y + self.z*other.z
+
+    def __add__(self, other):
+        return Vector(self.x + other.x, self.y + other.y, self.z + other.z)
+
+    def __sub__(self, other):
+        return Vector(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def __mul__(self, scalar):
+        return Vector(self.x*scalar, self.y*scalar, self.z*scalar)
+
+    @property
+    def length(self):
+        return sqrt(self.x*self.x + self.y*self.y + self.z*self.z)
+
+    @property
+    def normal(self):
+        return self * (1.0/self.length)
 class MyWindow(pyglet.window.Window):
 
 	# constructor
@@ -317,7 +377,11 @@ class MyWindow(pyglet.window.Window):
 		self.layerLabel = pyglet.text.Label(	"layer %d"%self.app.layerIdx,
 										font_size=12,
 										anchor_x='right', anchor_y='top')
+		self.lineLabel = pyglet.text.Label(	"line %d (%d - %d)" % ( self.app.lineIdx, self.app.lineIdxMin, self.app.lineIdxMax),
+										font_size=12,
+										anchor_x='right', anchor_y='top')
 		self.trLabels.append(self.layerLabel)
+		self.trLabels.append(self.lineLabel)
 
 		# layout the labels in the window's corners
 		self.placeLabels(self.width, self.height)
@@ -327,6 +391,7 @@ class MyWindow(pyglet.window.Window):
 	def on_resize(self, width, height):
 		glViewport(0, 0, width, height)
 		self.placeLabels(width, height)
+		self.app.aspect = float(width) / height
 		#self.render(width, height)
 		
 		return pyglet.event.EVENT_HANDLED
@@ -336,8 +401,11 @@ class MyWindow(pyglet.window.Window):
 		if button & mouse.LEFT:
 			self.app.rotate_drag_start(x, y, button, modifiers)
 			
-		if button & mouse.RIGHT:
+		if button & mouse.MIDDLE:
 			self.app.layer_drag_start(x, y, button, modifiers)
+
+		if button & mouse.RIGHT:
+			self.app.line_drag_start(x, y, button, modifiers)
 
 
 	def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
@@ -345,8 +413,11 @@ class MyWindow(pyglet.window.Window):
 		if buttons & mouse.LEFT:
 			self.app.rotate_drag_do(x, y, dx, dy, buttons, modifiers)
 			
-		if buttons & mouse.RIGHT:
+		if buttons & mouse.MIDDLE:
 			self.app.layer_drag_do(x, y, dx, dy, buttons, modifiers)
+		
+		if buttons & mouse.RIGHT:
+			self.app.line_drag_do(x, y, dx, dy, buttons, modifiers)
 
 
 	def on_mouse_release(self, x, y, button, modifiers):
@@ -354,8 +425,18 @@ class MyWindow(pyglet.window.Window):
 		if button & mouse.LEFT:
 			self.app.rotate_drag_end(x, y, button, modifiers)
 			
-		if button & mouse.RIGHT:
+		if button & mouse.MIDDLE:
 			self.app.layer_drag_end(x, y, button, modifiers)
+		
+		if button & mouse.RIGHT:
+			self.app.line_drag_end(x, y, button, modifiers)
+
+#	def on_mouse_motion(self, x, y, rx, ry):
+		#a = (GLfloat * 16)()
+  		#mvm = glGetFloatv(GL_MODELVIEW_MATRIX, a)
+		#print list(a)
+		#self.app.mouse_direction = self.app.unproject(x, y)
+		#self.app.pick_nearest()
 
 	def on_key_release(self, symbol, modifiers):
 		print "pressed key: %s, mod: %s"%(symbol, modifiers)
@@ -466,7 +547,17 @@ class MyWindow(pyglet.window.Window):
 		# highlighted layer
 		graphic = self.app.graphics_current[self.app.layerIdx]
 		graphic.draw(GL_LINES)
-		
+
+		# highlighted element
+		glLineWidth(5)
+		if self.app.lineSegmentIdx != 0:
+			hlvertices = self.app.graphics_current[self.app.layerIdx].vertices[0:self.app.lineSegmentIdx * 6]
+			vertex_list = pyglet.graphics.vertex_list(len(hlvertices)/3,
+					('v3f/static', hlvertices),
+					('c4B/static', self.app.graphics_current[self.app.layerIdx].colors[0:self.app.lineSegmentIdx * 8])
+				)
+			vertex_list.draw(GL_LINES)
+
 		glLineWidth(1)
 		# limbo layers
 		for graphic in self.app.graphics_limbo[self.app.layerIdx+1:]:
