@@ -16,12 +16,11 @@ Adapted from the excellent: https://github.com/jonathanwin/yagv
 
 * Features:
 
-  * Fast, easy to use, 3D inteface
-  * Display of weighted material mixing results (M163)
-  * Layer by layer/Line by line playback of gcode.
-  * Streamlined matching of line segments to gcode line numbers.
-  * Support for Machinekit velocity extrusion
-
+  * Fast, easy to use, 3D interface
+  * Parsing and display of weighted material mixing M163 codes
+  * Layer by layer/Line by line stepping/playback of gcode.
+  * Streamlined visual matching of current extrusion segment to gcode line number.
+  * Support for Machinekit velocity extrusion. There is no E.
 
 
 * Requires:
@@ -48,9 +47,9 @@ Adapted from the excellent: https://github.com/jonathanwin/yagv
 
 * Issues:
 
-  * Panning not yet supported.
-  * Adding/Removing codes is still manual
-  * Designed with Slic3r output in mind, may not support other slicing programs (suggestions/patches welcome).
+  * Panning not yet implemented.
+  * Adding/Removing M163 codes is still external/manual
+  * Designed for Slic3r output.  Other slicing programs may not work.
   * Many gcodes unsupported, in particular:
     - G20: Set Units to Inches (usage unknown) 
     - Arcs (G2 & G3 ?)
