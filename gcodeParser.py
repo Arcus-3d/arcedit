@@ -4,7 +4,9 @@ import math
 
 class GcodeParser:
 	
-	def __init__(self):
+	def __init__(self,config):
+		self.config = config
+		self.ignoreCodes = self.config.get('Gcode','ignore','').split(",")
 		self.model = GcodeModel(self)
 		
 	def parseFile(self, path):
@@ -43,7 +45,7 @@ class GcodeParser:
 		if code:
 			if hasattr(self, "parse_"+code):
 				getattr(self, "parse_"+code)(args)
-			else:
+			elif not code in self.ignoreCodes:
 				self.warn("Unknown code '%s'"%code)
 		
 	def parseArgs(self, args):
@@ -173,7 +175,9 @@ class GcodeModel:
 		self.segments = []
 		self.layers = None
 		self.distance = None
-		self.filamentColors = [[255,0,0],[255,255,0],[0,0,255],[-255,-255,-255],[255,255,255]]
+		self.filamentColors = []
+		for i in range(1,5):
+			self.filamentColors.append([int(n) for n in self.parser.config.get("Filament_%d"%i,"color","0,0,0").split(",")])
 		self.filamentWeights = [0.0,0.0,0.0,0.0,0.0]
 		self.color = [255,255,255]
 		self.volume = 0
@@ -300,17 +304,17 @@ class GcodeModel:
 					style = "retract" if (seg.coords["E"] < coords["E"]) else "restore"
 			
 			# some horizontal movement, and positive extruder movement: extrusion
-			if (
+			elif (
 				( (seg.coords["X"] != coords["X"]) or (seg.coords["Y"] != coords["Y"]) ) and
 				( ( seg.coords["E"] > coords["E"] ) or (seg.isExtruding ) ) ):
 				style = "extrude"
 			
-			# positive extruder movement in a different Z signals a layer change for this segment
-			if (
-				( ( seg.coords["E"] > coords["E"]) or ( seg.isExtruding ) ) and
-				(seg.coords["Z"] != currentLayerZ) ):
-				currentLayerZ = seg.coords["Z"]
-				currentLayerIdx += 1
+				# positive extruder movement in a different Z signals a layer change for this segment
+				if (
+					( ( seg.coords["E"] > coords["E"]) or ( seg.isExtruding ) ) and
+					(seg.coords["Z"] != currentLayerZ) ):
+					currentLayerZ = seg.coords["Z"]
+					currentLayerIdx += 1
 			
 			# set style and layer in segment
 			seg.style = style

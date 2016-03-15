@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-YAGV_VERSION = "0.4"
+YAGV_VERSION = "0.5"
 
 import pyglet
 
@@ -12,7 +12,8 @@ from pyglet import clock
 from pyglet.gl import *
 from pyglet.window import key
 from pyglet.window import mouse
-from math import tan, radians, sqrt
+#from math import tan, radians, sqrt
+import ConfigParser
 
 from gcodeParser import *
 import os.path
@@ -23,11 +24,23 @@ class App:
 		self.RX = 0.0
 		self.RZ = 0.0
 		self.zoom = 1.0
+		self.config = ConfigParser.ConfigParser()
+		self.config.read('config.cfg')
+		self.lowerOpacity = self.config.getint('Display','lower_layer_opacity') or int(50)
+		self.lowerLineWidth = self.config.getint('Display','lower_layer_line_width') or int(1)
+		
+		self.activeOpacity = self.config.getint('Display','active_layer_opacity') or int(255)
+		self.activeLineWidth = self.config.getint('Display','active_layer_line_width') or int(1)
+		
+		self.limboOpacity = self.config.getint('Display','limbo_layer_opacity') or int(255)
+		self.limboLineWidth = self.config.getint('Display','limbo_layer_line_width') or int(1)
+		
+		self.segmentLineWidth = self.config.getint('Display','active_segment_line_width') or int(5)
 	
 	def main(self):
 		
 		#### MAIN CODE ####
-		print "Yet Another GCode Viewer v%s"%YAGV_VERSION
+		print "Arcus-3D - yagv %s"%YAGV_VERSION
 
 		import sys
 		if len(sys.argv) > 1:
@@ -37,84 +50,88 @@ class App:
 			script_path = os.path.realpath(__file__)
 			# get the containing folder
 			script_dir = os.path.dirname(script_path)
-			# default to hana
-			path = os.path.join(script_dir, "data/hana_swimsuit_fv_solid_v1.gcode")
-		
+			path = os.path.join(script_dir, self.config.get('Startup','load_file','data/example.gcode'))
 		self.load(path)
-		
-		# default to the first layer
-		self.layerIdx = 1
-		self.lineSegmentIdx = 0
-		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
-		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
-		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
-		self.mouse_direction = Vector(0,0,0)
-		self.highlightIndex = None
-
-		self.window = MyWindow(self, caption="Yet Another GCode Viewer v%s"%YAGV_VERSION, resizable=True)
+		self.window = MyWindow(self, caption="Arcus-3D yagv - %s"%self.filename, resizable=True)
 		self.aspect = float(self.window.width) / self.window.height
-
 		# debug: log all events
 		# self.window.push_handlers(pyglet.window.event.WindowEventLogger())
 		
-
+		#pyglet.clock.schedule_interval(self.updateMessages,1)
 		pyglet.app.run()
+	def addMessage(self,message_text,timeout=4.0):
+		if hasattr(self,"window") and hasattr(self.window,"messageLabels"):
+			message = pyglet.text.Label(message_text,
+										multiline=True,
+										width=320,
+										font_size=12,
+										anchor_x='center',
+										anchor_y='center'
+			)
+			self.window.messageLabels.append(message)
+			self.window.dispatch_event('on_draw')
+			self.window.flip()
+		else:
+			print message_text
+
+	#def updateMessages(self, elapsed):
+		#for message in self.window.messageLabels[:]:
+			#if hasattr(message,"expires") and message.expires >= time.time():
+				#self.window.messageLabels.remove(message)
+
+	def clearMessages(self,delay=None):
+		if delay:
+			pyglet.clock.schedule_once(self.do_clearMessages,delay)
+		else:
+			self.window.messageLabels = []
+			self.window.dispatch_event('on_draw')
+			self.window.flip()
+	def do_clearMessages(self, elapsed):
+		self.window.messageLabels = []
 
 	def reload(self):
 		self.load(self.path)
 			
 	def load(self, path):
 		
-		print "loading file %s ..."%repr(path)
 		t1 = time.time()
 		
-		print
-		print "Parsing '%s'..."%path
-		print
+		#print
+		#print "Parsing '%s'..."%path
+		#print
 		
 		self.path = path
+		self.filename = os.path.basename(self.path)
+		self.addMessage("parsing file %s ..."%repr(self.filename))
 
-		parser = GcodeParser()
+		parser = GcodeParser(self.config)
 		self.model = parser.parseFile(path)
 
-		print
-		print "Done! %s"%self.model
-		print
+		t2 = time.time()
+		self.addMessage("parsed file in %0.3f ms" % ((t2-t1)*1000.0, ))
+		#print
+		#print "Done! %s"%self.model
+		#print
 		
 		# render the model
-		print "rendering vertices..."
+		self.addMessage("generating graphics...")
+		#print "rendering vertices..."
 		self.renderVertices()
-		print "rendering indexed colors..."
+		#print "rendering indexed colors..."
 		self.renderIndexedColors()
-		print "rendering true colors..."
+		#print "rendering true colors..."
 		self.renderColors()
-		print "generating graphics..."
 		self.generateGraphics()
-		print "Done"
-		
-		t2 = time.time()
-		print "loaded file in %0.3f ms" % ((t2-t1)*1000.0, )
+		self.layerIdx = 1
+		self.lineSegmentIdx = 0
+		self.lineSegmentPreviousIdx = 0
+		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
+		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
+		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
+		t3 = time.time()
+		self.addMessage("generated graphics in %0.3f ms" % ((t3-t2)*1000.0, ))
+		self.clearMessages(2)
 
-	def unproject(self,x, y):
-		x = 2 * (float(x) / self.window.width) - 1
-		y = 2 * (float(y) / self.window.height) - 1
-		tangent = tan(radians(50) / 2)
-		dx = self.aspect * tangent * x
-		dy = tangent * y
-		dz = -1.0
-		return Vector(dx, dy, dz).normal
-
-	def pick_nearest(self):
-		p = Vector(0, 0, 0) # mouse ray position in scene
-		nearest = 0.5
-		nearest_index = None
-		for index, vertex in enumerate(self.graphics_current[self.layerIdx].vertices):
-			dp = self.mouse_direction.dot((vertex - p).normal)
-			if dp > nearest:
-				nearest = dp
-				nearest_index = index
-		self.highlightIndex = nearest_index
-	
 	def renderVertices(self):
 		t1 = time.time()
 		
@@ -141,13 +158,14 @@ class App:
 			self.vertices.append(layer_vertices)
 			
 		t2 = time.time()
-		print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
+		#print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
 	
 	def renderIndexedColors(self):
 		t1 = time.time()
 		# all the styles for all layers
 		self.vertex_indexed_colors = []
 		# for all layers
+		rapid_color = [int(n) for n in self.config.get('Display','rapid_color','255,255,128').split(",")]
 		for layer in self.model.layers:
 			# index for this layer
 			layer_vertex_indexed_colors = []
@@ -162,22 +180,22 @@ class App:
 					colorEnd = colorCurrent
 					colorPrevious = colorCurrent
 				else:
-					colorStart = [255,255,128]
-					colorEnd = [255,255,128]
+					colorStart = rapid_color
+					colorEnd = rapid_color
 				# append color twice (once per end)
 				layer_vertex_indexed_colors.extend((colorStart, colorEnd))
 			
 			# append layer to all layers
 			self.vertex_indexed_colors.append(layer_vertex_indexed_colors)
 		t2 = time.time()
-		print "end renderIndexedColors in %0.3f ms" % ((t2-t1)*1000.0, )
+		#print "end renderIndexedColors in %0.3f ms" % ((t2-t1)*1000.0, )
 	
 	def renderColors(self):
 		t1 = time.time()
 		
 		self.vertex_colors = [[],[],[]]
 		# for all 3 layer types, with 3 different opacities.
-		for i,opacity in enumerate([80,255,20]):
+		for i,opacity in enumerate([self.lowerOpacity,self.activeOpacity,self.limboOpacity]):
 			for indexes in self.vertex_indexed_colors:
 				# render color indexes to colors
 				colors = []
@@ -186,7 +204,7 @@ class App:
 					colors.extend([opacity])
 				self.vertex_colors[i].append(colors)
 		t2 = time.time()
-		print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
+		#print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
 	
 	def generateGraphics(self):
 		t1 = time.time()
@@ -217,15 +235,13 @@ class App:
 		#	print nb_layer_vertices, len(self.vertices[layer_idx]), len(self.colors[0][layer_idx])
 		
 		t2 = time.time()
-		print "end generateGraphics in %0.3f ms" % ((t2-t1)*1000.0, )
-		
+		#print "end generateGraphics in %0.3f ms" % ((t2-t1)*1000.0, )
 		
 	def rotate_drag_start(self, x, y, button, modifiers):
 		self.rotateDragStartRX = self.RX
 		self.rotateDragStartRZ = self.RZ
 		self.rotateDragStartX = x
 		self.rotateDragStartY = y
-
 
 	def rotate_drag_do(self, x, y, dx, dy, buttons, modifiers):
 		# deltas
@@ -235,13 +251,11 @@ class App:
 		self.RZ = self.rotateDragStartRZ + deltaX/5.0 # mouse X bound to model Z
 		self.RX = self.rotateDragStartRX + deltaY/5.0 # mouse Y bound to model X
 
-
 	def rotate_drag_end(self, x, y, button, modifiers):
 		self.rotateDragStartRX = None
 		self.rotateDragStartRZ = None
 		self.rotateDragStartX = None
 		self.rotateDragStartY = None
-
 
 	def layer_drag_start(self, x, y, button, modifiers):
 		self.layerDragStartLayer = self.layerIdx
@@ -250,6 +264,7 @@ class App:
 		self.layerDragStartY = y
 
 	def line_drag_start(self, x, y, button, modifiers):
+
 		self.layerDragStartLayer = self.layerIdx
 		self.layerDragStartSegment = self.lineSegmentIdx
 		self.layerDragStartX = x
@@ -259,25 +274,25 @@ class App:
 		delta = y - self.layerDragStartY + x - self.layerDragStartX
 		oldLayerIdx = self.layerIdx
 		self.layerIdx = int(self.layerDragStartLayer + delta/15)
-		self.layerIdx = max(min(self.layerIdx, self.model.topLayer), 0)
 		if oldLayerIdx != self.layerIdx:
 			self.lineSegmentIdx = 0	
-		self.lineSegmentIdx = max(min(self.lineSegmentIdx, len(self.model.layers[self.layerIdx].segments) - 1),0)
-		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
-		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
-		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
-		self.window.layerLabel.text = "layer %d"%self.layerIdx
-		self.window.lineLabel.text = "line %d (%d - %d)" % ( self.lineIdx, self.lineIdxMin, self.lineIdxMax)
+			self.updateLayers()
 		
 	def line_drag_do(self, x, y, dx, dy, buttons, modifiers):
 		delta = y - self.layerDragStartY + x - self.layerDragStartX
 		self.lineSegmentIdx = int(self.layerDragStartSegment + delta)
+		self.updateLayers()
+
+	def updateLayers(self):
+		self.layerIdx = max(min(self.layerIdx, self.model.topLayer), 1)
 		self.lineSegmentIdx = max(min(self.lineSegmentIdx, len(self.model.layers[self.layerIdx].segments) - 1),0)
 		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
 		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
 		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
-		self.window.layerLabel.text = "layer %d"%self.layerIdx
-		self.window.lineLabel.text = "line %d (%d - %d)" % ( self.lineIdx, self.lineIdxMin, self.lineIdxMax)
+		if self.window.layerLabel:
+			self.window.layerLabel.text = "Layer %d of %d - Lines %d to %d"%(self.layerIdx,self.model.topLayer, self.lineIdxMin,self.lineIdxMax)
+		if self.window.lineLabel:
+			self.window.lineLabel.text = "Line %d"%self.lineIdx
 	#	# clamp layer to 0-max, with origin slip
 	#	if (self.layerIdx < 0):
 	#		self.layerIdx = 0
@@ -301,41 +316,12 @@ class App:
 		self.layerDragStartX = None
 		self.layerDragStartY = None
 
-class Vector(object):
-    def __init__(self, x, y, z):
-        self.x = x
-        self.y = y
-        self.z = z
-
-    def __iter__(self):
-        return iter((self.x, self.y, self.z))
-
-    def dot(self, other):
-        return self.x*other.x + self.y*other.y + self.z*other.z
-
-    def __add__(self, other):
-        return Vector(self.x + other.x, self.y + other.y, self.z + other.z)
-
-    def __sub__(self, other):
-        return Vector(self.x - other.x, self.y - other.y, self.z - other.z)
-
-    def __mul__(self, scalar):
-        return Vector(self.x*scalar, self.y*scalar, self.z*scalar)
-
-    @property
-    def length(self):
-        return sqrt(self.x*self.x + self.y*self.y + self.z*self.z)
-
-    @property
-    def normal(self):
-        return self * (1.0/self.length)
 class MyWindow(pyglet.window.Window):
 
 	# constructor
 	def __init__(self, app, **kwargs):
 		pyglet.window.Window.__init__(self, **kwargs)
 		self.app = app
-		self.hud()
 	
 	# hud info
 	def hud(self):
@@ -345,51 +331,55 @@ class MyWindow(pyglet.window.Window):
 		self.brLabels = []
 		self.tlLabels = []
 		self.trLabels = []
+		self.messageLabels = []
+		self.lineLabel = None	
+		self.layerLabel = None	
+		self.fpsLabel = None	
+		self.statusLabel = None
+		self.helpText = None	
 
 		# help
-		self.helpText = [
-						"Ctrl-R to reload file",
-						"Right-click & drag (any direction) to change layer",
-						"Scroll to zoom",
-						"Left-click & drag to rotate view"]
-		for txt in self.helpText:
+		if not self.app.config.getboolean('Display','hide_help'):
 			self.blLabels.append(
-				pyglet.text.Label(	txt,
+				pyglet.text.Label(	"Press H for help",
 									font_size=12) )
 
 		# statistics
 		## model stats
-		self.statsLabel = pyglet.text.Label(	"",
+		if not self.app.config.getboolean('Display','hide_stats'):
+			self.statsLabel = pyglet.text.Label("",
 										font_size=12,
-										anchor_y='top')
-		filename = os.path.basename(self.app.path)
-		self.statsLabel.text = "%s: %d segments, %d layers."%(filename, len(self.app.model.segments), len(self.app.model.layers))
+										anchor_x='left', anchor_y='top')
 		
+			self.statsLabel.text = "%d segments, %d layers."%(len(self.app.model.segments), self.app.model.topLayer)
+			self.tlLabels.append(self.statsLabel)
 		## fps counter
-		self.fpsLabel = pyglet.text.Label(	"",
+		if not self.app.config.getboolean('Display','hide_fps'):
+			self.fpsLabel = pyglet.text.Label(	"0 fps",
 										font_size=12,
 										anchor_y='top')
-		self.tlLabels.append(self.statsLabel)
-		self.tlLabels.append(self.fpsLabel)
+			self.tlLabels.append(self.fpsLabel)
 
-		# status
 		## current Layer
-		self.layerLabel = pyglet.text.Label(	"layer %d"%self.app.layerIdx,
+		if not self.app.config.getboolean('Display','hide_layer'):
+			self.layerLabel = pyglet.text.Label("Layer %d of %d - Lines %d to %d"%(self.app.layerIdx,self.app.model.topLayer, self.app.lineIdxMin,self.app.lineIdxMax),
 										font_size=12,
 										anchor_x='right', anchor_y='top')
-		self.lineLabel = pyglet.text.Label(	"line %d (%d - %d)" % ( self.app.lineIdx, self.app.lineIdxMin, self.app.lineIdxMax),
+			self.trLabels.append(self.layerLabel)
+		if not self.app.config.getboolean('Display','hide_line'):
+			self.lineLabel = pyglet.text.Label(	"Line %d"%self.app.lineIdx,
 										font_size=12,
-										anchor_x='right', anchor_y='top')
-		self.trLabels.append(self.layerLabel)
-		self.trLabels.append(self.lineLabel)
+										anchor_x='right', anchor_y='bottom')
+			self.brLabels.append(self.lineLabel)
 
-		# layout the labels in the window's corners
+		# layout the labels
 		self.placeLabels(self.width, self.height)
 	
 	
 	# events
 	def on_resize(self, width, height):
 		glViewport(0, 0, width, height)
+		self.hud()
 		self.placeLabels(width, height)
 		self.app.aspect = float(width) / height
 		#self.render(width, height)
@@ -431,18 +421,46 @@ class MyWindow(pyglet.window.Window):
 		if button & mouse.RIGHT:
 			self.app.line_drag_end(x, y, button, modifiers)
 
-#	def on_mouse_motion(self, x, y, rx, ry):
-		#a = (GLfloat * 16)()
-  		#mvm = glGetFloatv(GL_MODELVIEW_MATRIX, a)
-		#print list(a)
-		#self.app.mouse_direction = self.app.unproject(x, y)
-		#self.app.pick_nearest()
-
 	def on_key_release(self, symbol, modifiers):
-		print "pressed key: %s, mod: %s"%(symbol, modifiers)
+		if symbol==pyglet.window.key.H:
+			self.app.clearMessages()
+			self.helpText = None
+		elif symbol==pyglet.window.key.ESCAPE:
+			pyglet.app.exit()
+	def on_key_press(self, symbol, modifiers):
+		#print "pressed key: %s, mod: %s"%(symbol, modifiers)
 		#print "pressed key: %s, mod: %s"%(pyglet.window.key.R, pyglet.window.key.MOD_CTRL)
-		if symbol==pyglet.window.key.R and modifiers & pyglet.window.key.MOD_CTRL:
+		if symbol==pyglet.window.key.R:
 			self.app.reload()
+		elif symbol==pyglet.window.key.END:
+			self.app.layerIdx = 1
+			self.app.updateLayers()
+		elif symbol==pyglet.window.key.HOME:
+			self.app.layerIdx = self.app.model.topLayer
+			self.app.updateLayers()
+		elif symbol==pyglet.window.key.H:
+			if not self.helpText:
+				self.app.addMessage('Keyboard\n____________________\nR\t\tReload file\nHome\t\tTop Layer\nEnd\t\tBottom Layer\nUp\t\tNext Layer\nDown\t\tPrevious Layer\nRight\t\tNext Line\nLeft\t\tPrevious Line\nCtrl+Right\tForward 20 Lines\nCtrl+Left\tBack 20 Lines\n\n\nMouse\n____________________\nLeft-Button + Drag\tRotate View\nMiddle-Button + Drag\tChange Layer\nRight-Button + Drag\tChange Line\nScroll-Wheel\t\t\tZoom')
+				self.helpText = True
+	def on_text_motion(self,motion):
+		if motion == pyglet.window.key.MOTION_UP:
+			self.app.layerIdx += 1
+			self.app.updateLayers()
+		elif motion == pyglet.window.key.MOTION_DOWN:
+			self.app.layerIdx -= 1
+			self.app.updateLayers()
+		elif motion == pyglet.window.key.MOTION_RIGHT:
+			self.app.lineSegmentIdx += 1
+			self.app.updateLayers()
+		elif motion == pyglet.window.key.MOTION_LEFT:
+			self.app.lineSegmentIdx -= 1
+			self.app.updateLayers()
+		elif motion == pyglet.window.key.MOTION_NEXT_WORD:
+			self.app.lineSegmentIdx += 20
+			self.app.updateLayers()
+		elif motion == pyglet.window.key.MOTION_PREVIOUS_WORD:
+			self.app.lineSegmentIdx -= 20
+			self.app.updateLayers()
 		
 	def placeLabels(self, width, height):
 		x = 5
@@ -472,6 +490,12 @@ class MyWindow(pyglet.window.Window):
 			label.x = x
 			label.y = y
 			y -= 20
+		x = width/2
+		y = height/2
+		for label in self.messageLabels:
+			label.x = x
+			label.y = y
+			y -= 20
 
 
 	def on_mouse_scroll(self, x, y, dx, dy):
@@ -488,6 +512,7 @@ class MyWindow(pyglet.window.Window):
 		
 		# setup projection
 		glMatrixMode(GL_PROJECTION)
+		#glShaderModel(GL_SMOOTH)
 		glLoadIdentity()
 		gluPerspective(65, self.width / float(self.height), 0.1, 1000)
 		
@@ -536,29 +561,32 @@ class MyWindow(pyglet.window.Window):
 		glEnd()
 		
 		
-		glLineWidth(1)
+		glLineWidth(self.app.lowerLineWidth)
 		# Draw the model layers
 		# lower layers
 		for graphic in self.app.graphics_old[0:self.app.layerIdx]:
 			graphic.draw(GL_LINES)
 		
-		glLineWidth(2)
+		glLineWidth(self.app.activeLineWidth)
 		
 		# highlighted layer
 		graphic = self.app.graphics_current[self.app.layerIdx]
 		graphic.draw(GL_LINES)
 
-		# highlighted element
-		glLineWidth(5)
-		if self.app.lineSegmentIdx != 0:
-			hlvertices = self.app.graphics_current[self.app.layerIdx].vertices[0:self.app.lineSegmentIdx * 6]
-			vertex_list = pyglet.graphics.vertex_list(len(hlvertices)/3,
-					('v3f/static', hlvertices),
-					('c4B/static', self.app.graphics_current[self.app.layerIdx].colors[0:self.app.lineSegmentIdx * 8])
-				)
-			vertex_list.draw(GL_LINES)
-
-		glLineWidth(1)
+		# progressively highlight line segments
+		if self.app.lineSegmentIdx:
+ 			if self.app.lineSegmentIdx != self.app.lineSegmentPreviousIdx:
+				hlvertices = self.app.graphics_current[self.app.layerIdx].vertices[0:self.app.lineSegmentIdx * 6]
+				self.app.graphics_segments = pyglet.graphics.vertex_list(len(hlvertices)/3,
+						('v3f/static', hlvertices),
+						('c4B/static', self.app.graphics_current[self.app.layerIdx].colors[0:self.app.lineSegmentIdx * 8])
+					)
+				self.app.lineSegmentPreviousIdx = self.app.lineSegmentIdx
+			glLineWidth(self.app.segmentLineWidth)
+			graphic = self.app.graphics_segments
+			graphic.draw(GL_LINES)
+		
+		glLineWidth(self.app.limboLineWidth)
 		# limbo layers
 		for graphic in self.app.graphics_limbo[self.app.layerIdx+1:]:
 			graphic.draw(GL_LINES)
@@ -576,7 +604,8 @@ class MyWindow(pyglet.window.Window):
 		glMatrixMode(GL_MODELVIEW)
 		glLoadIdentity()
 		
-		self.fpsLabel.text = "%d fps"%int(round(pyglet.clock.get_fps()))
+		if self.fpsLabel:
+			self.fpsLabel.text = "%d fps"%int(round(pyglet.clock.get_fps()))
 		
 		for label in self.blLabels:
 			label.draw()
@@ -586,6 +615,14 @@ class MyWindow(pyglet.window.Window):
 			label.draw()
 		for label in self.trLabels:
 			label.draw()
+	
+		this_x = self.width/2
+		this_y = self.height/2
+		for label in self.messageLabels:
+			label.x = this_x
+			label.y = this_y
+			label.draw()
+			this_y -= 20
 		
 		# reenable depth for next model display
 		glEnable(GL_DEPTH_TEST)
