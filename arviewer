@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-YAGV_VERSION = "0.5"
+VERSION = "0.5"
 
 import pyglet
 
@@ -40,7 +40,7 @@ class App:
 	def main(self):
 		
 		#### MAIN CODE ####
-		print "Arcus-3D - yagv %s"%YAGV_VERSION
+		print "Arcus-3D - arviewer v%s"%VERSION
 
 		import sys
 		if len(sys.argv) > 1:
@@ -52,7 +52,7 @@ class App:
 			script_dir = os.path.dirname(script_path)
 			path = os.path.join(script_dir, self.config.get('Startup','load_file','data/example.gcode'))
 		self.load(path)
-		self.window = MyWindow(self, caption="Arcus-3D yagv - %s"%self.filename, resizable=True)
+		self.window = MyWindow(self, caption="Arcus-3D - arviewer: %s"%self.filename, resizable=True)
 		self.aspect = float(self.window.width) / self.window.height
 		# debug: log all events
 		# self.window.push_handlers(pyglet.window.event.WindowEventLogger())
