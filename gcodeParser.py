@@ -176,7 +176,7 @@ class GcodeModel:
 		self.layers = None
 		self.distance = None
 		self.filamentColors = []
-		for i in range(1,5):
+		for i in range(1,6):
 			self.filamentColors.append([int(n) for n in self.parser.config.get("Filament_%d"%i,"color","0,0,0").split(",")])
 		self.filamentWeights = [0.0,0.0,0.0,0.0,0.0]
 		self.color = [255,255,255]
