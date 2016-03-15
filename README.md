@@ -1,6 +1,8 @@
 # arviewer
 
-A fast 3D Gcode Viewer for visualization of multi-material, weighted mixing, extrusion.
+A fast 3D Gcode Viewer for visualization of multi-material, weighted mixing, fused filament fabrication.
+
+## Overview
 
 This was created to speed up *manually* adding the M163 codes needed for controlling active mixing filament printers, mainly... mine.  
 Support for multi-material 3D printing is still young, and currently support for mixed/full color filament printing is basically non-existant.
