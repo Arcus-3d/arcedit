@@ -50,3 +50,7 @@ M163 S1 P10 = feed filament 1 at 10% rate.
 * Many gcodes unsupported, in particular:
   * G20: Set Units to Inches (usage unknown) 
   * Arcs (G2 & G3 ?)
+#+CAPTION: CD4046B Block Diagramm
+#+NAME:   fig:cd4046
+#+name: fig:cd4046
+[[./images/arviewer.png]]
