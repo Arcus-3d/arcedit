@@ -36,6 +36,7 @@ class App:
 		self.limboLineWidth = self.config.getint('Display','limbo_layer_line_width') or int(1)
 		
 		self.segmentLineWidth = self.config.getint('Display','active_segment_line_width') or int(5)
+		self.solidLineWidth = self.config.getint('Display','render_solid_line_width') or int(5)
 	
 	def main(self):
 		
@@ -117,8 +118,6 @@ class App:
 		self.addMessage("generating graphics...")
 		#print "rendering vertices..."
 		self.renderVertices()
-		#print "rendering indexed colors..."
-		self.renderIndexedColors()
 		#print "rendering true colors..."
 		self.renderColors()
 		self.generateGraphics()
@@ -135,43 +134,28 @@ class App:
 	def renderVertices(self):
 		t1 = time.time()
 		
-		self.vertices = []
+		self.extrude_vertices = []
+		self.fly_vertices = []
+		self.extrude_vertex_indexed_colors = []
+		self.fly_vertex_indexed_colors = []
+		rapidColor = [int(n) for n in self.config.get('Display','rapid_color','255,255,128').split(",")]
 		
 		for layer in self.model.layers:
 			
-			layer_vertices = []
+			layer_extrude_vertex_indexed_colors = []
+			layer_fly_vertex_indexed_colors = []
+			layer_extrude_vertices = []
+			layer_fly_vertices = []
 			
 			x = layer.start["X"]
 			y = layer.start["Y"]
 			z = layer.start["Z"]
 			for seg in layer.segments:
-				layer_vertices.append(x)
-				layer_vertices.append(y)
-				layer_vertices.append(z)
-				x = seg.coords["X"]
-				y = seg.coords["Y"]
-				z = seg.coords["Z"]
-				layer_vertices.append(x)
-				layer_vertices.append(y)
-				layer_vertices.append(z)
-				
-			self.vertices.append(layer_vertices)
-			
-		t2 = time.time()
-		#print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
-	
-	def renderIndexedColors(self):
-		t1 = time.time()
-		# all the styles for all layers
-		self.vertex_indexed_colors = []
-		# for all layers
-		rapid_color = [int(n) for n in self.config.get('Display','rapid_color','255,255,128').split(",")]
-		for layer in self.model.layers:
-			# index for this layer
-			layer_vertex_indexed_colors = []
-			for seg in layer.segments:
 				colorPrevious = None
-				if seg.style == "extrude":
+				if seg.style == 'extrude':
+					layer_extrude_vertices.append(x)
+					layer_extrude_vertices.append(y)
+					layer_extrude_vertices.append(z)
 					colorCurrent = seg.color
 					# naive implementation of color change over line length, not accounting for line length at all.
 					if not colorPrevious:
@@ -179,61 +163,112 @@ class App:
 					colorStart = colorPrevious
 					colorEnd = colorCurrent
 					colorPrevious = colorCurrent
+					layer_extrude_vertex_indexed_colors.extend((colorStart, colorEnd))
 				else:
-					colorStart = rapid_color
-					colorEnd = rapid_color
-				# append color twice (once per end)
-				layer_vertex_indexed_colors.extend((colorStart, colorEnd))
+					layer_fly_vertices.append(x)
+					layer_fly_vertices.append(y)
+					layer_fly_vertices.append(z)
+					colorStart = rapidColor
+					colorEnd = rapidColor
+					layer_fly_vertex_indexed_colors.extend((rapidColor, rapidColor))
+				x = seg.coords["X"]
+				y = seg.coords["Y"]
+				z = seg.coords["Z"]
+				if seg.style == 'extrude':
+					layer_extrude_vertices.append(x)
+					layer_extrude_vertices.append(y)
+					layer_extrude_vertices.append(z)
+				else:
+					layer_fly_vertices.append(x)
+					layer_fly_vertices.append(y)
+					layer_fly_vertices.append(z)
+			self.extrude_vertex_indexed_colors.append(layer_extrude_vertex_indexed_colors)
+			self.fly_vertex_indexed_colors.append(layer_fly_vertex_indexed_colors)
+			self.extrude_vertices.append(layer_extrude_vertices)
+			self.fly_vertices.append(layer_fly_vertices)
 			
-			# append layer to all layers
-			self.vertex_indexed_colors.append(layer_vertex_indexed_colors)
 		t2 = time.time()
-		#print "end renderIndexedColors in %0.3f ms" % ((t2-t1)*1000.0, )
+		#print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
 	
 	def renderColors(self):
 		t1 = time.time()
 		
-		self.vertex_colors = [[],[],[]]
+		self.extrude_vertex_colors = [[],[],[]]
+		self.fly_vertex_colors = [[],[],[]]
 		# for all 3 layer types, with 3 different opacities.
 		for i,opacity in enumerate([self.lowerOpacity,self.activeOpacity,self.limboOpacity]):
-			for indexes in self.vertex_indexed_colors:
+			for indexes in self.extrude_vertex_indexed_colors:
 				# render color indexes to colors
 				colors = []
 				for index in indexes:
 					colors.extend(index)
 					colors.extend([opacity])
-				self.vertex_colors[i].append(colors)
+				self.extrude_vertex_colors[i].append(colors)
+			for indexes in self.fly_vertex_indexed_colors:
+				# render color indexes to colors
+				colors = []
+				for index in indexes:
+					colors.extend(index)
+					colors.extend([opacity])
+				self.fly_vertex_colors[i].append(colors)
 		t2 = time.time()
 		#print "end renderColors in %0.3f ms" % ((t2-t1)*1000.0, )
 	
 	def generateGraphics(self):
 		t1 = time.time()
 		
-		self.graphics_old = []
-		self.graphics_current = []
-		self.graphics_limbo = []
-		
-		for layer_idx in xrange(len(self.vertices)):
-			nb_layer_vertices = len(self.vertices[layer_idx])/3
+		self.extrude_graphics_old = []
+		self.extrude_graphics_current = []
+		self.extrude_graphics_limbo = []
+		self.graphics_solid = []
+		all_vertices = []	
+		all_colors = []	
+		for layer_idx in xrange(len(self.extrude_vertices)):
+			nb_layer_vertices = len(self.extrude_vertices[layer_idx])/3
+			print nb_layer_vertices
+			print self.extrude_vertex_colors[0][layer_idx]
 			vertex_list = pyglet.graphics.vertex_list(nb_layer_vertices,
-				('v3f/static', self.vertices[layer_idx]),
-				('c4B/static', self.vertex_colors[0][layer_idx])
+				('v3f/static', self.extrude_vertices[layer_idx]),
+				('c4B/static', self.extrude_vertex_colors[0][layer_idx])
 			)
-			self.graphics_old.append(vertex_list)
+			self.extrude_graphics_old.append(vertex_list)
 			
 			vertex_list = pyglet.graphics.vertex_list(nb_layer_vertices,
-				('v3f/static', self.vertices[layer_idx]),
-				('c4B/static', self.vertex_colors[1][layer_idx])
+				('v3f/static', self.extrude_vertices[layer_idx]),
+				('c4B/static', self.extrude_vertex_colors[1][layer_idx])
 			)
-			self.graphics_current.append(vertex_list)
+			self.extrude_graphics_current.append(vertex_list)
 			
 			vertex_list = pyglet.graphics.vertex_list(nb_layer_vertices,
-				('v3f/static', self.vertices[layer_idx]),
-				('c4B/static', self.vertex_colors[2][layer_idx])
+				('v3f/static', self.extrude_vertices[layer_idx]),
+				('c4B/static', self.extrude_vertex_colors[2][layer_idx])
 			)
-			self.graphics_limbo.append(vertex_list)
-		#	print nb_layer_vertices, len(self.vertices[layer_idx]), len(self.colors[0][layer_idx])
-		
+			self.extrude_graphics_limbo.append(vertex_list)
+			all_vertices.extend(self.extrude_vertices[layer_idx])
+			all_colors.extend(self.extrude_vertex_colors[1][layer_idx])
+		for layer_idx in xrange(len(self.fly_vertices)):
+			nb_layer_vertices = len(self.fly_vertices[layer_idx])/3
+			vertex_list = pyglet.graphics.vertex_list(nb_layer_vertices,
+				('v3f/static', self.fly_vertices[layer_idx]),
+				('c4B/static', self.fly_vertex_colors[0][layer_idx])
+			)
+			self.fly_graphics_old.append(vertex_list)
+			
+			vertex_list = pyglet.graphics.vertex_list(nb_layer_vertices,
+				('v3f/static', self.fly_vertices[layer_idx]),
+				('c4B/static', self.fly_vertex_colors[1][layer_idx])
+			)
+			self.fly_graphics_current.append(vertex_list)
+			
+			vertex_list = pyglet.graphics.vertex_list(nb_layer_vertices,
+				('v3f/static', self.fly_vertices[layer_idx]),
+				('c4B/static', self.fly_vertex_colors[2][layer_idx])
+			)
+			self.fly_graphics_limbo.append(vertex_list)
+		self.extrude_graphics_solid = pyglet.graphics.vertex_list(len(all_vertices)/3,
+			('v3f/static', all_vertices),
+			('c4B/static', all_colors)
+		)
 		t2 = time.time()
 		#print "end generateGraphics in %0.3f ms" % ((t2-t1)*1000.0, )
 		
@@ -336,7 +371,7 @@ class MyWindow(pyglet.window.Window):
 		self.layerLabel = None	
 		self.fpsLabel = None	
 		self.statusLabel = None
-		self.helpText = None	
+		self.renderMode = None	
 
 		# help
 		if not self.app.config.getboolean('Display','hide_help'):
@@ -424,7 +459,9 @@ class MyWindow(pyglet.window.Window):
 	def on_key_release(self, symbol, modifiers):
 		if symbol==pyglet.window.key.H:
 			self.app.clearMessages()
-			self.helpText = None
+			self.renderMode = None
+		elif symbol==pyglet.window.key.S:
+			self.renderMode = None
 		elif symbol==pyglet.window.key.ESCAPE:
 			pyglet.app.exit()
 	def on_key_press(self, symbol, modifiers):
@@ -438,10 +475,13 @@ class MyWindow(pyglet.window.Window):
 		elif symbol==pyglet.window.key.HOME:
 			self.app.layerIdx = self.app.model.topLayer
 			self.app.updateLayers()
+		elif symbol==pyglet.window.key.S:
+			if not self.renderMode:
+				self.renderMode = 'S'
 		elif symbol==pyglet.window.key.H:
-			if not self.helpText:
-				self.app.addMessage('Keyboard\n____________________\nR\t\tReload file\nHome\t\tTop Layer\nEnd\t\tBottom Layer\nUp\t\tNext Layer\nDown\t\tPrevious Layer\nRight\t\tNext Line\nLeft\t\tPrevious Line\nCtrl+Right\tForward 20 Lines\nCtrl+Left\tBack 20 Lines\n\n\nMouse\n____________________\nLeft-Button + Drag\tRotate View\nMiddle-Button + Drag\tChange Layer\nRight-Button + Drag\tChange Line\nScroll-Wheel\t\t\tZoom')
-				self.helpText = True
+			if not self.renderMode:
+				self.app.addMessage('Keyboard\n____________________\nR\t\tReload file\nHome\t\tS\t\tRender Solid\nTop Layer\nEnd\t\tBottom Layer\nUp\t\tNext Layer\nDown\t\tPrevious Layer\nRight\t\tNext Line\nLeft\t\tPrevious Line\nCtrl+Right\tForward 20 Lines\nCtrl+Left\tBack 20 Lines\n\n\nMouse\n____________________\nLeft-Button + Drag\tRotate View\nMiddle-Button + Drag\tChange Layer\nRight-Button + Drag\tChange Line\nScroll-Wheel\t\t\tZoom')
+				self.renderMode = 'H'
 	def on_text_motion(self,motion):
 		if motion == pyglet.window.key.MOTION_UP:
 			self.app.layerIdx += 1
@@ -561,37 +601,36 @@ class MyWindow(pyglet.window.Window):
 		glEnd()
 		
 		
-		glLineWidth(self.app.lowerLineWidth)
-		# Draw the model layers
-		# lower layers
-		for graphic in self.app.graphics_old[0:self.app.layerIdx]:
+		if not self.renderMode:
+			# Draw the model layers
+			# Draw lower layers
+			glLineWidth(self.app.lowerLineWidth)
+			for graphic in self.app.extrude_graphics_old[0:self.app.layerIdx]:
+				graphic.draw(GL_LINES)
+			# Draw highlighted layer
+			glLineWidth(self.app.activeLineWidth)
+			graphic = self.app.extrude_graphics_current[self.app.layerIdx]
 			graphic.draw(GL_LINES)
-		
-		glLineWidth(self.app.activeLineWidth)
-		
-		# highlighted layer
-		graphic = self.app.graphics_current[self.app.layerIdx]
-		graphic.draw(GL_LINES)
-
-		# progressively highlight line segments
-		if self.app.lineSegmentIdx:
- 			if self.app.lineSegmentIdx != self.app.lineSegmentPreviousIdx:
-				hlvertices = self.app.graphics_current[self.app.layerIdx].vertices[0:self.app.lineSegmentIdx * 6]
-				self.app.graphics_segments = pyglet.graphics.vertex_list(len(hlvertices)/3,
-						('v3f/static', hlvertices),
-						('c4B/static', self.app.graphics_current[self.app.layerIdx].colors[0:self.app.lineSegmentIdx * 8])
-					)
-				self.app.lineSegmentPreviousIdx = self.app.lineSegmentIdx
-			glLineWidth(self.app.segmentLineWidth)
-			graphic = self.app.graphics_segments
-			graphic.draw(GL_LINES)
-		
-		glLineWidth(self.app.limboLineWidth)
-		# limbo layers
-		for graphic in self.app.graphics_limbo[self.app.layerIdx+1:]:
-			graphic.draw(GL_LINES)
-		
-		
+			# Re-draw active line segments
+			if self.app.lineSegmentIdx:
+ 				if self.app.lineSegmentIdx != self.app.lineSegmentPreviousIdx:
+					hlvertices = self.app.extrude_graphics_current[self.app.layerIdx].extrude_vertices[0:self.app.lineSegmentIdx * 6]
+					self.app.graphics_segments = pyglet.graphics.vertex_list(len(hlvertices)/3,
+							('v3f/static', hlvertices),
+							('c4B/static', self.app.extrude_graphics_current[self.app.layerIdx].colors[0:self.app.lineSegmentIdx * 8])
+						)
+					self.app.lineSegmentPreviousIdx = self.app.lineSegmentIdx
+				glLineWidth(self.app.segmentLineWidth)
+				graphic = self.app.graphics_segments
+				graphic.draw(GL_LINES)
+			# Draw upper layers
+			glLineWidth(self.app.limboLineWidth)
+			for graphic in self.app.graphics_limbo[self.app.layerIdx+1:]:
+				graphic.draw(GL_LINES)
+		elif self.renderMode == 'S':
+			# Draw all layers with thick lines to approximate the solid model
+			glLineWidth(self.app.solidLineWidth)
+			self.app.graphics_solid.draw(GL_LINES)
 		# disable depth for HUD
 		glDisable(GL_DEPTH_TEST)
 		glDepthMask(0)
