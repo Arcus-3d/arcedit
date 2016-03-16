@@ -18,6 +18,7 @@ import ConfigParser
 from gcodeParser import *
 import os.path
 import time
+import vimrunner
 
 class App:
 	def __init__(self):
@@ -36,6 +37,7 @@ class App:
 		self.limboLineWidth = self.config.getint('Display','limbo_layer_line_width') or int(1)
 		
 		self.segmentLineWidth = self.config.getint('Display','active_segment_line_width') or int(5)
+		self.scriptDir = os.path.dirname(os.path.realpath(__file__))
 	
 	def main(self):
 		
@@ -47,17 +49,26 @@ class App:
 			path = sys.argv[1]
 		else:
 			# get the real path to the script
-			script_path = os.path.realpath(__file__)
 			# get the containing folder
-			script_dir = os.path.dirname(script_path)
-			path = os.path.join(script_dir, self.config.get('Startup','load_file','data/example.gcode'))
+			path = os.path.join(self.scriptDir, self.config.get('Startup','load_file','data/example.gcode'))
+		self.vim = vimrunner.Server().start_gvim()
+		self.vim.prepend_runtimepath(os.path.join(self.scriptDir,'vim'))
+		
+		self.vim.edit(path)
 		self.load(path)
+		self.layerIdx = 1
+		self.previousLayerIdx = 1
+		self.lineSegmentIdx = 0
+		self.previousLineSegmentIdx = 0
+		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
+		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
+		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
+		self.vim.normal(":set syntax=ngc\n")
 		self.window = MyWindow(self, caption="Arcus-3D - arviewer: %s"%self.filename, resizable=True)
 		self.aspect = float(self.window.width) / self.window.height
 		# debug: log all events
 		# self.window.push_handlers(pyglet.window.event.WindowEventLogger())
-		
-		#pyglet.clock.schedule_interval(self.updateMessages,1)
+		self.layerChangeTime = None	
 		pyglet.app.run()
 	def addMessage(self,message_text,timeout=4.0):
 		if hasattr(self,"window") and hasattr(self.window,"messageLabels"):
@@ -74,11 +85,11 @@ class App:
 		else:
 			print message_text
 
-	#def updateMessages(self, elapsed):
-		#for message in self.window.messageLabels[:]:
-			#if hasattr(message,"expires") and message.expires >= time.time():
-				#self.window.messageLabels.remove(message)
-
+	# unused atm
+	def updateMessages(self, elapsed):
+		for message in self.window.messageLabels[:]:
+			if hasattr(message,"expires") and message.expires >= time.time():
+				self.window.messageLabels.remove(message)
 	def clearMessages(self,delay=None):
 		if delay:
 			pyglet.clock.schedule_once(self.do_clearMessages,delay)
@@ -91,7 +102,8 @@ class App:
 
 	def reload(self):
 		self.load(self.path)
-			
+		self.updateLayers()
+		#self.gotoLineIdx(int(self.vim.eval('line(".")')))			
 	def load(self, path):
 		
 		t1 = time.time()
@@ -122,12 +134,6 @@ class App:
 		#print "rendering true colors..."
 		self.renderColors()
 		self.generateGraphics()
-		self.layerIdx = 1
-		self.lineSegmentIdx = 0
-		self.lineSegmentPreviousIdx = 0
-		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
-		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
-		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
 		t3 = time.time()
 		self.addMessage("generated graphics in %0.3f ms" % ((t3-t2)*1000.0, ))
 		self.clearMessages(2)
@@ -262,6 +268,7 @@ class App:
 		self.layerDragStartSegment = self.lineSegmentIdx
 		self.layerDragStartX = x
 		self.layerDragStartY = y
+		self.layerChangeTime = time.time()
 
 	def line_drag_start(self, x, y, button, modifiers):
 
@@ -269,6 +276,7 @@ class App:
 		self.layerDragStartSegment = self.lineSegmentIdx
 		self.layerDragStartX = x
 		self.layerDragStartY = y
+		self.layerChangeTime = time.time()
 
 	def layer_drag_do(self, x, y, dx, dy, buttons, modifiers):
 		delta = y - self.layerDragStartY + x - self.layerDragStartX
@@ -283,12 +291,55 @@ class App:
 		self.lineSegmentIdx = int(self.layerDragStartSegment + delta)
 		self.updateLayers()
 
+	def updateVimLine(self,dt):
+		self.vim.normal(":%d\n"%self.lineIdx)
+	def gotoLineIdx(self,line):
+		for layerIdx,layer in enumerate(self.model.layers):
+			if layer.segments[0].lineNb < line and layer.segments[-1].lineNb > line:
+				for lineSegmentIdx,segment in enumerate(layer.segments):
+					if segments.lineNb == line:
+						self.layerIdx = layerIdx
+						self.lineSegmentIdx = lineSegmentIdx
+						self.updateLayers()
+						return
+	def gotoNextRapid(self):
+		while self.layerIdx <= self.model.topLayer:
+			for lineSegmentIdx,segment in enumerate(self.model.layers[self.layerIdx].segments):
+				if segment.style == 'fly' and lineSegmentIdx > self.lineSegmentIdx:
+					self.lineSegmentIdx = lineSegmentIdx + 1
+					self.updateLayers()
+					return
+			if self.layerIdx >= self.model.topLayer: 
+				return
+			else:
+				self.layerIdx += 1
+				self.updateLayers()
+	def gotoPreviousRapid(self):
+		while self.layerIdx >= 0:
+			for lineSegmentIdx,segment in reversed(list(enumerate(self.model.layers[self.layerIdx].segments))):
+				if segment.style == 'fly' and lineSegmentIdx < self.lineSegmentIdx:
+					self.lineSegmentIdx = lineSegmentIdx - 1
+					self.updateLayers()
+					return
+			if self.layerIdx == 0: 
+				return
+			else:
+				self.layerIdx -= 1
+				self.updateLayers()
 	def updateLayers(self):
-		self.layerIdx = max(min(self.layerIdx, self.model.topLayer), 1)
+		pyglet.clock.unschedule(self.updateVimLine)
+		pyglet.clock.schedule_once(self.updateVimLine,0.1)
+		self.layerChangeTime = time.time()
+		self.layerIdx = max(min(self.layerIdx, self.model.topLayer), 0)
+		if self.layerIdx < self.previousLayerIdx:
+			self.lineSegmentIdx = len(self.model.layers[self.layerIdx].segments)
+		elif self.layerIdx > self.previousLayerIdx:
+			self.lineSegmentIdx = 0	
 		self.lineSegmentIdx = max(min(self.lineSegmentIdx, len(self.model.layers[self.layerIdx].segments) - 1),0)
 		self.lineIdx = self.model.layers[self.layerIdx].segments[self.lineSegmentIdx].lineNb
 		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
 		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
+		self.previousLayerIdx = self.layerIdx
 		if self.window.layerLabel:
 			self.window.layerLabel.text = "Layer %d of %d - Lines %d to %d"%(self.layerIdx,self.model.topLayer, self.lineIdxMin,self.lineIdxMax)
 		if self.window.lineLabel:
@@ -310,11 +361,17 @@ class App:
 		self.layerDragStartLayer = None
 		self.layerDragStartX = None
 		self.layerDragStartY = None
+		self.layerChangeTime = None
+		pyglet.clock.unschedule(self.updateVimLine)
+		self.vim.normal(":%d\n"%self.lineIdx)
 	
 	def line_drag_end(self, x, y, button, modifiers):
 		self.layerDragStartLayer = None
 		self.layerDragStartX = None
 		self.layerDragStartY = None
+		self.layerChangeTime = None
+		pyglet.clock.unschedule(self.updateVimLine)
+		self.vim.normal(":%d\n"%self.lineIdx)
 
 class MyWindow(pyglet.window.Window):
 
@@ -426,12 +483,21 @@ class MyWindow(pyglet.window.Window):
 			self.app.clearMessages()
 			self.helpText = None
 		elif symbol==pyglet.window.key.ESCAPE:
+			self.app.vim.normal(":q!\n")
 			pyglet.app.exit()
 	def on_key_press(self, symbol, modifiers):
 		#print "pressed key: %s, mod: %s"%(symbol, modifiers)
 		#print "pressed key: %s, mod: %s"%(pyglet.window.key.R, pyglet.window.key.MOD_CTRL)
 		if symbol==pyglet.window.key.R:
+			self.app.vim.normal(":w!\n")
 			self.app.reload()
+		elif symbol==pyglet.window.key.N:
+			self.app.gotoNextRapid()
+		elif symbol==pyglet.window.key.P:
+			self.app.gotoPreviousRapid()
+		elif symbol==pyglet.window.key.C:
+			self.app.vim.normal(":%d\n"%self.app.lineIdx)
+			self.app.vim.insert("\nM163 S1 P0; red\nM163 S2 P0; yellow\nM163 S3 P0; blue\nM163 S4 P0; black\nM163 S5 P0; white\n\n")
 		elif symbol==pyglet.window.key.END:
 			self.app.layerIdx = 1
 			self.app.updateLayers()
@@ -575,13 +641,13 @@ class MyWindow(pyglet.window.Window):
 
 		# progressively highlight line segments
 		if self.app.lineSegmentIdx:
- 			if self.app.lineSegmentIdx != self.app.lineSegmentPreviousIdx:
+ 			if self.app.lineSegmentIdx != self.app.previousLineSegmentIdx:
 				hlvertices = self.app.graphics_current[self.app.layerIdx].vertices[0:self.app.lineSegmentIdx * 6]
 				self.app.graphics_segments = pyglet.graphics.vertex_list(len(hlvertices)/3,
 						('v3f/static', hlvertices),
 						('c4B/static', self.app.graphics_current[self.app.layerIdx].colors[0:self.app.lineSegmentIdx * 8])
 					)
-				self.app.lineSegmentPreviousIdx = self.app.lineSegmentIdx
+				self.app.previousLineSegmentIdx = self.app.lineSegmentIdx
 			glLineWidth(self.app.segmentLineWidth)
 			graphic = self.app.graphics_segments
 			graphic.draw(GL_LINES)

@@ -19,7 +19,8 @@ Adapted from the excellent: https://github.com/jonathanwin/yagv
   * Fast, easy to use, 3D interface
   * Parsing and display of weighted material mixing M163 codes
   * Layer by layer/Line by line stepping/playback of gcode.
-  * Streamlined visual matching of current extrusion segment to gcode line number.
+  * Opens and controls an interactive gvim window for editing.
+  * Streamlines visual matching of current extrusion segment to gcode line number.
   * Support for Machinekit velocity extrusion. There is no E.
 
 
@@ -29,20 +30,21 @@ Adapted from the excellent: https://github.com/jonathanwin/yagv
     http://python.org/
   * pyglet 1.1+ (1.1.4 tested)
     http://www.pyglet.org
+  * vimrunner 1.0.3
+    sudo pip install vimrunner
+  * gvim 7.4 with +clientserver enabled at compile time
+    vim --version to check compile time options
 
 * Usage:
 
   * Generate gcode using the velocity extrusion patched version of Slic3r for Machinekit.
   * Edit config.cfg and setup your filament color RGB values.
-  * Load the resulting gcode in your favorite text editor.
   * Execute: arviewer [file.gcode]
   * Use arviewer to locate a suitable point to alter the filament mix ratio.
-  * Add some 'M163 filament weights' to your gcode and save.  For example:
-    -  M163 S1 P0  - Set filament 1 to no extrusion.
-  	-  M163 S2 P10 - Set filament 2 to 10% extrusion.
-  	-  M163 S3 P90 - Set filament 3 to 90% extrusion.
-  * Press R in arviewer to reload the gcode and see the changes.  The filament RGB value after mixing is calculated per line segment, and the resulting extrusion is displayed in the interface.
-  * Repeat the last two steps... a lot.
+  * Press C to insert color code at that point and review the changes made via the gvim window.
+  * Press R in arviewer to save the changes in gvim, and to reload arviewer and see the changes.  
+    The filament RGB value after mixing is calculated per line segment, and the resulting extrusion is displayed in the interface.
+  * Repeat the last three steps... a lot.
 
 
 * Issues:
