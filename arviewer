@@ -13,7 +13,8 @@ from pyglet.gl import *
 from pyglet.window import key
 from pyglet.window import mouse
 #from math import tan, radians, sqrt
-import ConfigParser
+from configobj import ConfigObj
+from validate import Validator
 
 from gcodeParser import *
 import os.path
@@ -25,20 +26,44 @@ class App:
 		self.RX = 0.0
 		self.RZ = 0.0
 		self.zoom = 1.0
-		self.config = ConfigParser.ConfigParser()
-		self.config.read('config.cfg')
-		self.lowerOpacity = self.config.getint('Display','lower_layer_opacity') or int(50)
-		self.lowerLineWidth = self.config.getint('Display','lower_layer_line_width') or int(1)
-		
-		self.activeOpacity = self.config.getint('Display','active_layer_opacity') or int(255)
-		self.activeLineWidth = self.config.getint('Display','active_layer_line_width') or int(1)
-		
-		self.limboOpacity = self.config.getint('Display','limbo_layer_opacity') or int(255)
-		self.limboLineWidth = self.config.getint('Display','limbo_layer_line_width') or int(1)
-		
-		self.segmentLineWidth = self.config.getint('Display','active_segment_line_width') or int(5)
+		configspec="""
+[startup]
+load_file= string(default=data/example.gcode)
+[display]
+background=int_list
+rapid=int_list
+lower_opacity=int
+lower_line_width=int
+active_opacity=int
+active_line_width=int 
+limbo_opacity=int
+limbo_line_width=int
+segment_line_width=int
+solid_line_width=int
+
+[interface]
+hide_help=boolean
+hide_status=boolean
+hide_stats=boolean
+hide_fps=boolean
+hide_layer=boolean
+hide_line=boolean
+
+[filaments]
+[[__many__]]
+color=int_list
+
+[gcode]
+ignore=string_list
+
+[shortcuts]
+[[__many__]]
+send=string
+"""
 		self.scriptDir = os.path.dirname(os.path.realpath(__file__))
-	
+		self.config = ConfigObj('config.cfg',unrepr=True,configspec=configspec.split("\n"))
+		validator = Validator()
+		result = self.config.validate(validator)
 	def main(self):
 		
 		#### MAIN CODE ####
@@ -50,7 +75,7 @@ class App:
 		else:
 			# get the real path to the script
 			# get the containing folder
-			path = os.path.join(self.scriptDir, self.config.get('Startup','load_file','data/example.gcode'))
+			path = os.path.join(self.scriptDir, self.config['startup']['load_file'])
 		self.vim = vimrunner.Server().start_gvim()
 		self.vim.prepend_runtimepath(os.path.join(self.scriptDir,'vim'))
 		
@@ -171,7 +196,7 @@ class App:
 		# all the styles for all layers
 		self.vertex_indexed_colors = []
 		# for all layers
-		rapid_color = [int(n) for n in self.config.get('Display','rapid_color','255,255,128').split(",")]
+		self.config['display']['rapid_color']
 		for layer in self.model.layers:
 			# index for this layer
 			layer_vertex_indexed_colors = []
@@ -186,8 +211,8 @@ class App:
 					colorEnd = colorCurrent
 					colorPrevious = colorCurrent
 				else:
-					colorStart = rapid_color
-					colorEnd = rapid_color
+					colorStart = self.config['display']['rapid_color']
+					colorEnd = self.config['display']['rapid_color']
 				# append color twice (once per end)
 				layer_vertex_indexed_colors.extend((colorStart, colorEnd))
 			
@@ -201,7 +226,7 @@ class App:
 		
 		self.vertex_colors = [[],[],[]]
 		# for all 3 layer types, with 3 different opacities.
-		for i,opacity in enumerate([self.lowerOpacity,self.activeOpacity,self.limboOpacity]):
+		for i,opacity in enumerate([self.config["display"]["lower_opacity"],self.config["display"]["active_opacity"],self.config["display"]["limbo_opacity"]]):
 			for indexes in self.vertex_indexed_colors:
 				# render color indexes to colors
 				colors = []
@@ -379,6 +404,11 @@ class MyWindow(pyglet.window.Window):
 	def __init__(self, app, **kwargs):
 		pyglet.window.Window.__init__(self, **kwargs)
 		self.app = app
+		self.app.shortcuts={}
+		for keyname in self.app.config["shortcuts"]:
+			if hasattr(pyglet.window.key,keyname):	
+				self.app.shortcuts[getattr(pyglet.window.key,keyname)] = self.app.config["shortcuts"][keyname]["send"]
+			
 	
 	# hud info
 	def hud(self):
@@ -396,14 +426,14 @@ class MyWindow(pyglet.window.Window):
 		self.helpText = None	
 
 		# help
-		if not self.app.config.getboolean('Display','hide_help'):
+		if not self.app.config["interface"]["hide_help"]:
 			self.blLabels.append(
 				pyglet.text.Label(	"Press H for help",
 									font_size=12) )
 
 		# statistics
 		## model stats
-		if not self.app.config.getboolean('Display','hide_stats'):
+		if not self.app.config["interface"]["hide_stats"]:
 			self.statsLabel = pyglet.text.Label("",
 										font_size=12,
 										anchor_x='left', anchor_y='top')
@@ -411,19 +441,19 @@ class MyWindow(pyglet.window.Window):
 			self.statsLabel.text = "%d segments, %d layers."%(len(self.app.model.segments), self.app.model.topLayer)
 			self.tlLabels.append(self.statsLabel)
 		## fps counter
-		if not self.app.config.getboolean('Display','hide_fps'):
+		if not self.app.config["interface"]["hide_fps"]:
 			self.fpsLabel = pyglet.text.Label(	"0 fps",
 										font_size=12,
 										anchor_y='top')
 			self.tlLabels.append(self.fpsLabel)
 
 		## current Layer
-		if not self.app.config.getboolean('Display','hide_layer'):
+		if not self.app.config["interface"]["hide_layer"]:
 			self.layerLabel = pyglet.text.Label("Layer %d of %d - Lines %d to %d"%(self.app.layerIdx,self.app.model.topLayer, self.app.lineIdxMin,self.app.lineIdxMax),
 										font_size=12,
 										anchor_x='right', anchor_y='top')
 			self.trLabels.append(self.layerLabel)
-		if not self.app.config.getboolean('Display','hide_line'):
+		if not self.app.config["interface"]["hide_line"]:
 			self.lineLabel = pyglet.text.Label(	"Line %d"%self.app.lineIdx,
 										font_size=12,
 										anchor_x='right', anchor_y='bottom')
@@ -482,22 +512,22 @@ class MyWindow(pyglet.window.Window):
 		if symbol==pyglet.window.key.H:
 			self.app.clearMessages()
 			self.helpText = None
-		elif symbol==pyglet.window.key.ESCAPE:
-			self.app.vim.normal(":q!\n")
-			pyglet.app.exit()
 	def on_key_press(self, symbol, modifiers):
 		#print "pressed key: %s, mod: %s"%(symbol, modifiers)
 		#print "pressed key: %s, mod: %s"%(pyglet.window.key.R, pyglet.window.key.MOD_CTRL)
-		if symbol==pyglet.window.key.R:
+		if symbol in self.app.shortcuts:
+			self.app.vim.normal(":%d\n"%self.app.lineIdx)
+			self.app.vim.insert(self.app.shortcuts[symbol])
+		elif symbol==pyglet.window.key.R:
 			self.app.vim.normal(":w!\n")
 			self.app.reload()
+		elif symbol==pyglet.window.key.Q and modifiers & pyglet.window.key.MOD_CTRL:
+			self.app.vim.normal(":q!\n")
+			pyglet.app.exit()
 		elif symbol==pyglet.window.key.N:
 			self.app.gotoNextRapid()
 		elif symbol==pyglet.window.key.P:
 			self.app.gotoPreviousRapid()
-		elif symbol==pyglet.window.key.C:
-			self.app.vim.normal(":%d\n"%self.app.lineIdx)
-			self.app.vim.insert("\nM163 S1 P0; red\nM163 S2 P0; yellow\nM163 S3 P0; blue\nM163 S4 P0; black\nM163 S5 P0; white\n\n")
 		elif symbol==pyglet.window.key.END:
 			self.app.layerIdx = 1
 			self.app.updateLayers()
@@ -627,13 +657,13 @@ class MyWindow(pyglet.window.Window):
 		glEnd()
 		
 		
-		glLineWidth(self.app.lowerLineWidth)
+		glLineWidth(self.app.config["display"]["lower_line_width"])
 		# Draw the model layers
 		# lower layers
 		for graphic in self.app.graphics_old[0:self.app.layerIdx]:
 			graphic.draw(GL_LINES)
 		
-		glLineWidth(self.app.activeLineWidth)
+		glLineWidth(self.app.config["display"]["active_line_width"])
 		
 		# highlighted layer
 		graphic = self.app.graphics_current[self.app.layerIdx]
@@ -648,11 +678,11 @@ class MyWindow(pyglet.window.Window):
 						('c4B/static', self.app.graphics_current[self.app.layerIdx].colors[0:self.app.lineSegmentIdx * 8])
 					)
 				self.app.previousLineSegmentIdx = self.app.lineSegmentIdx
-			glLineWidth(self.app.segmentLineWidth)
+			glLineWidth(self.app.config["display"]["segment_line_width"])
 			graphic = self.app.graphics_segments
 			graphic.draw(GL_LINES)
 		
-		glLineWidth(self.app.limboLineWidth)
+		glLineWidth(self.app.config["display"]["limbo_line_width"])
 		# limbo layers
 		for graphic in self.app.graphics_limbo[self.app.layerIdx+1:]:
 			graphic.draw(GL_LINES)

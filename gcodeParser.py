@@ -6,7 +6,6 @@ class GcodeParser:
 	
 	def __init__(self,config):
 		self.config = config
-		self.ignoreCodes = self.config.get('Gcode','ignore','').split(",")
 		self.model = GcodeModel(self)
 		
 	def parseFile(self, path):
@@ -45,7 +44,7 @@ class GcodeParser:
 		if code:
 			if hasattr(self, "parse_"+code):
 				getattr(self, "parse_"+code)(args)
-			elif not code in self.ignoreCodes:
+			elif not code in self.config['gcode']['ignore']:
 				self.warn("Unknown code '%s'"%code)
 		
 	def parseArgs(self, args):
@@ -176,8 +175,8 @@ class GcodeModel:
 		self.layers = None
 		self.distance = None
 		self.filamentColors = []
-		for i in range(1,6):
-			self.filamentColors.append([int(n) for n in self.parser.config.get("Filament_%d"%i,"color","0,0,0").split(",")])
+		for name in self.parser.config["filaments"]:
+			self.filamentColors.append(self.parser.config["filaments"][name]["color"])
 		self.filamentWeights = [0.0,0.0,0.0,0.0,0.0]
 		self.color = [255,255,255]
 		self.volume = 0
@@ -219,7 +218,8 @@ class GcodeModel:
 		
 	def do_G28(self, args):
 		# G28: Move to Origin
-		self.warn("G28 unimplemented")
+		#self.warn("G28 unimplemented")
+		pass
 		
 	def do_G92(self, args):
 		# G92: Set Position
@@ -252,7 +252,6 @@ class GcodeModel:
 					(self.filamentColors[4][o] * self.filamentWeights[4]) 
 			)),0.0))
 		self.setColor(color)
-		print color
 	
 	def setExtruding(self, isExtruding):
 		self.isExtruding = isExtruding
@@ -268,7 +267,6 @@ class GcodeModel:
 		
 	def addSegment(self, segment):
 		self.segments.append(segment)
-		#print segment
 		
 	def warn(self, msg):
 		self.parser.warn(msg)
@@ -319,13 +317,6 @@ class GcodeModel:
 			# set style and layer in segment
 			seg.style = style
 			seg.layerIdx = currentLayerIdx
-			
-			
-			#print coords
-			#print seg.coords
-			#print "%s (%s  | %s)"%(style, str(seg.coords), seg.line)
-			#print
-			
 			# execute segment
 			coords = seg.coords
 			
