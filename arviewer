@@ -108,7 +108,6 @@ send=string
 			self.window.dispatch_event('on_draw')
 			self.window.flip()
 		else:
-			print message_text
 
 	# unused atm
 	def updateMessages(self, elapsed):
@@ -408,8 +407,6 @@ class MyWindow(pyglet.window.Window):
 		for keyname in self.app.config["shortcuts"]:
 			if hasattr(pyglet.window.key,keyname):	
 				self.app.shortcuts[getattr(pyglet.window.key,keyname)] = self.app.config["shortcuts"][keyname]["send"]
-			
-	
 	# hud info
 	def hud(self):
 		
