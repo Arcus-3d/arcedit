@@ -108,7 +108,7 @@ send=string
 			self.window.dispatch_event('on_draw')
 			self.window.flip()
 		else:
-
+			print message_text
 	# unused atm
 	def updateMessages(self, elapsed):
 		for message in self.window.messageLabels[:]:
