@@ -1,27 +1,26 @@
-* arviewer
-A fast 3D Gcode Viewer for visualization of multi-material, weighted mixing, fused filament fabrication.
+* arcedit
+A fast 3D Gcode Viewer/Editor for visualization of multi-material, weighted mixing, fused filament fabrication.
 
 #+CAPTION: CD4046B Block Diagramm
 #+NAME:   fig:cd4046
 #+name: fig:cd4046
-[[./images/arviewer.png]]
+[[./images/arcedit.png]]
 
 * Overview
 
-This was created to speed up *manually* adding the M163 codes needed for controlling active mixing filament printers, mainly... mine.  
+This was created to speed up adding the codes needed for controlling active mixing filament printers, mainly... mine.  
 Support for multi-material 3D printing is still young, and currently support for mixed/full color filament printing is basically non-existant.
 This method gets around that for the time being as we'll never have weighted material support in a slicer until we are using it in 3d printers.
 
-Adapted from the excellent: https://github.com/jonathanwin/yagv
+Adapted from the very hackable: https://github.com/jonathanwin/yagv
 
 * Features:
 
   * Fast, easy to use, 3D interface
   * Parsing and display of weighted material mixing M163 codes
-  * Layer by layer/Line by line stepping/playback of gcode.
-  * Opens and controls an interactive gvim window for editing.
-  * Streamlines visual matching of current extrusion segment to gcode line number.
-  * Support for Machinekit velocity extrusion. There is no E.
+  * Layer by layer/line by line stepping and playback of gcode.
+  * Syncs the currently rendered gcode to an interactive gvim window for editing.
+  * Supports Machinekit velocity extrusion. There is no E.
 
 
 * Requires:
@@ -36,22 +35,26 @@ Adapted from the excellent: https://github.com/jonathanwin/yagv
     vim --version to check compile time options
 
 * Usage:
-
-  * Generate gcode using the velocity extrusion patched version of Slic3r for Machinekit.
-  * Edit config.cfg and setup your filament color RGB values.
-  * Execute: arviewer [file.gcode]
-  * Use arviewer to locate a suitable point to alter the filament mix ratio.
-  * Press C to insert color code at that point and review the changes made via the gvim window.
-  * Press R in arviewer to save the changes in gvim, and to reload arviewer and see the changes.  
-    The filament RGB value after mixing is calculated per line segment, and the resulting extrusion is displayed in the interface.
-  * Repeat the last three steps... a lot.
+  
+  * Edit config.cfg and setup your filament color RGB values for display.
+  * Generate gcode using the velocity extrusion patched version of Slic3r for Machinekit.  Add at least one 'filament weight' code to the start of your gcode during slicing.  Example: 'M163 S1 P100 ; filament 1 at 100% weight'
+  * Execute: arcedit [file.gcode]
+  * Use arcedit to locate a suitable point to alter the filament mix ratio.
+    * Press Up/Down or middle mouse + drage to switch layers.
+    * Press N and P go to next/previous rapid location (usually to a new area)
+    * Use Left/Right to go forward/backward in time for extrusion.  Hold Control to go faster.
+    * Where you want to start a new color, press C to insert a new blank color code and edit it. ( or pre-define color codes in config.cfg -> shortcuts )
+  * Press R to save and reload.  The resulting material/color changes are displayed in the interface.  If possible, the current location is maintained. 
+    Repeat the last 2 steps for each area you want to change, per layer.
 
 
 * Issues:
-
+  * It's still a manual process.
+  * You have to reload the file after every change to see it. There is a better way...
   * Panning not yet implemented.
-  * Adding/Removing M163 codes is still external/manual
-  * Designed for Slic3r output.  Other slicing programs may not work.
+  * I designed this using Slic3r output.  Other slicing programs may not work.
+  * Sometimes I get 'Bus errors'.  This is what happens when I loose sync with the gvim process.  Restarting arcedit works, and you don't loose anything.
+  * Processor usage is higher than it needs to be.
   * Many gcodes unsupported, in particular:
-    - G20: Set Units to Inches (usage unknown) 
+    - G20: Set Units to Inches (usage unknown)
     - Arcs (G2 & G3 ?)

@@ -67,7 +67,7 @@ send=string
 	def main(self):
 		
 		#### MAIN CODE ####
-		print "Arcus-3D - arviewer v%s"%VERSION
+		print "Arcus-3D - arcedit v%s"%VERSION
 
 		import sys
 		if len(sys.argv) > 1:
@@ -89,7 +89,7 @@ send=string
 		self.lineIdxMax = self.model.layers[self.layerIdx].segments[-1].lineNb
 		self.lineIdxMin = self.model.layers[self.layerIdx].segments[0].lineNb
 		self.vim.normal(":set syntax=ngc\n")
-		self.window = MyWindow(self, caption="Arcus-3D - arviewer: %s"%self.filename, resizable=True)
+		self.window = MyWindow(self, caption="Arcus-3D - arcedit: %s"%self.filename, resizable=True)
 		self.aspect = float(self.window.width) / self.window.height
 		# debug: log all events
 		# self.window.push_handlers(pyglet.window.event.WindowEventLogger())
